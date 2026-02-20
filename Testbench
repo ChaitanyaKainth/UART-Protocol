@@ -1,0 +1,115 @@
+`timescale 1ns/1ns
+
+module uart_tb;
+
+  // -----------------------------
+  // Timing configuration
+  // -----------------------------
+  timeunit 1ns;
+  timeprecision 1ns;
+
+  parameter int BAUD = 9600;
+  time bit_time = 1_000_000_000 / BAUD;
+
+  // -----------------------------
+  // Signals
+  // -----------------------------
+  logic tx;
+  logic rx;
+
+  // Loopback (no DUT for now)
+  assign rx = tx;
+
+  // -----------------------------
+  // Expected data queue
+  // -----------------------------
+  byte expected_q[$];
+
+  // -----------------------------
+  // UART TX Driver Task
+  // -----------------------------
+  task send_byte(input byte data);
+    int i;
+
+    // Idle
+    tx = 1;
+    #(bit_time);
+
+    // Start bit
+    tx = 0;
+    #(bit_time);
+
+    // Data bits (LSB first)
+    for (i = 0; i < 8; i++) begin
+      tx = data[i];
+      #(bit_time);
+    end
+
+    // Stop bit
+    tx = 1;
+    #(bit_time);
+  endtask
+
+  // -----------------------------
+  // UART RX Monitor Task
+  // -----------------------------
+  task monitor_byte(output byte rx_data);
+    int i;
+
+    // Wait for start bit
+    @(negedge rx);
+
+    // Move to middle of first data bit
+    #(bit_time / 2);
+
+    // Sample data bits
+    for (i = 0; i < 8; i++) begin
+      #(bit_time);
+      rx_data[i] = rx;
+    end
+
+    // Check stop bit
+    #(bit_time);
+    if (rx !== 1)
+      $error("Framing error: Stop bit not detected");
+  endtask
+
+  // -----------------------------
+  // RX Monitor + Checker
+  // -----------------------------
+  initial begin
+    byte rx_data;
+
+    forever begin
+      monitor_byte(rx_data);
+
+      if (expected_q.size() == 0) begin
+        $error("Unexpected byte received: %0h", rx_data);
+      end
+      else begin
+        byte exp = expected_q.pop_front();
+        if (rx_data !== exp)
+          $error("DATA MISMATCH: expected=%0h received=%0h", exp, rx_data);
+        else
+          $display("PASS: %0h", rx_data);
+      end
+    end
+  end
+
+  // -----------------------------
+  // TX Stimulus
+  // -----------------------------
+  initial begin
+    tx = 1; // idle
+
+    repeat (5) begin
+      byte data = $urandom;
+      expected_q.push_back(data);
+      send_byte(data);
+    end
+
+    #(10 * bit_time);
+    $finish;
+  end
+
+endmodule
